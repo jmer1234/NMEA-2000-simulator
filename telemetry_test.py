@@ -17,6 +17,20 @@ except ImportError:
 KNOTS_TO_M_S = 0.514444
 BOAT_SPEED_MODIFIER = 0.4
 
+# Canyon Lake, TX (Comal County) bounding box.
+# Rough box that contains the lake's main body, from the dam near
+# Canyon City up to Cranes Mill / Potters Creek at the northwest end.
+CANYON_LAKE_BOUNDS = {
+    "north": 29.930,
+    "south": 29.845,
+    "east": -98.170,
+    "west": -98.320,
+}
+
+# Starting point roughly in the middle of the lake
+START_LAT = 29.8746
+START_LON = -98.2496
+
 def can_id_from_pgn(pgn, priority=3, source_address=1):
     """Combines PGN, priority, and source address into a 29-bit CAN ID for N2K."""
     return (priority << 26) | (pgn << 8) | source_address
@@ -121,6 +135,38 @@ def move_position(lat, lon, bearing_rad, distance_m):
     new_lon_deg = (math.degrees(new_lon_rad) + 540) % 360 - 180
     return math.degrees(new_lat_rad), new_lon_deg
 
+def clamp_to_lake(lat, lon, cog_true_deg, heading_velocity, bounds=CANYON_LAKE_BOUNDS):
+    """
+    Keeps the simulated position inside the Canyon Lake bounding box.
+    If the boat drifts past a bound, it's pulled back inside and its
+    course is reflected so it heads back toward open water instead of
+    running aground.
+    """
+    bounced = False
+
+    if lat > bounds["north"]:
+        lat = bounds["north"]
+        cog_true_deg = (-cog_true_deg) % 360   # reflect north/south component
+        bounced = True
+    elif lat < bounds["south"]:
+        lat = bounds["south"]
+        cog_true_deg = (-cog_true_deg) % 360
+        bounced = True
+
+    if lon > bounds["east"]:
+        lon = bounds["east"]
+        cog_true_deg = (180 - cog_true_deg) % 360  # reflect east/west component
+        bounced = True
+    elif lon < bounds["west"]:
+        lon = bounds["west"]
+        cog_true_deg = (180 - cog_true_deg) % 360
+        bounced = True
+
+    if bounced:
+        heading_velocity = 0.0
+
+    return lat, lon, cog_true_deg, heading_velocity
+
 def run_simulation(bus):
     """Handles the main loop updates sequentially without layout nesting."""
     # Simulation Initial baselines
@@ -129,24 +175,20 @@ def run_simulation(bus):
     water_temp_c = 18.5                        
     MAGNETIC_VARIATION = 4.0                   
     
-    lat, lon = 29.4241, -98.4936               
+    lat, lon = START_LAT, START_LON
     cog_true_deg = 45.0                             
     awa_deg = 30.0                             
     
     counter = 0
 
     print("[-] Engine Active. Press Ctrl+C to terminate.")
+    print(f"[-] Simulated vessel bounded to Canyon Lake, TX: "
+          f"N {CANYON_LAKE_BOUNDS['north']}, S {CANYON_LAKE_BOUNDS['south']}, "
+          f"E {CANYON_LAKE_BOUNDS['east']}, W {CANYON_LAKE_BOUNDS['west']}")
 
-    lat, lon = 29.4241, -98.4936               
-    cog_true_deg = 45.0                             
-    awa_deg = 30.0                             
-    
     # NEW: Tracks the current turning momentum of the boat
     heading_velocity = 0.0 
-    
-    counter = 0
 
-    
     while True:
         # 1. Update Dynamic Environmental Parameters
         wind_speed_knots += random.uniform(-0.25, 0.25)
@@ -177,6 +219,14 @@ def run_simulation(bus):
         cog_mag_rad = math.radians(cog_mag_deg)
         
         lat, lon = move_position(lat, lon, cog_true_rad, boat_speed_m_s / 10.0)
+
+        # Keep the vessel within the Canyon Lake, TX bounding box
+        lat, lon, cog_true_deg, heading_velocity = clamp_to_lake(
+            lat, lon, cog_true_deg, heading_velocity
+        )
+        cog_true_rad = math.radians(cog_true_deg)
+        cog_mag_deg = (cog_true_deg - MAGNETIC_VARIATION) % 360
+        cog_mag_rad = math.radians(cog_mag_deg)
         
         # RESTORED: Wave motion math required for Section 3
         pitch_sim = math.radians(1.5 * math.sin(time.time() * 2))
