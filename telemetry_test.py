@@ -18,8 +18,6 @@ KNOTS_TO_M_S = 0.514444
 BOAT_SPEED_MODIFIER = 0.4
 
 # Canyon Lake, TX (Comal County) bounding box.
-# Rough box that contains the lake's main body, from the dam near
-# Canyon City up to Cranes Mill / Potters Creek at the northwest end.
 CANYON_LAKE_BOUNDS = {
     "north": 29.930,
     "south": 29.845,
@@ -30,6 +28,18 @@ CANYON_LAKE_BOUNDS = {
 # Starting point roughly in the middle of the lake
 START_LAT = 29.8746
 START_LON = -98.2496
+
+def calculate_initial_bearing(lat1, lon1, lat2, lon2):
+    """Calculates the initial compass bearing from (lat1, lon1) to (lat2, lon2) in degrees [0, 360)."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_lambda = math.radians(lon2 - lon1)
+
+    y = math.sin(delta_lambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+
+    bearing_rad = math.atan2(y, x)
+    return (math.degrees(bearing_rad) + 360) % 360
 
 def can_id_from_pgn(pgn, priority=3, source_address=1):
     """Combines PGN, priority, and source address into a 29-bit CAN ID for N2K."""
@@ -135,41 +145,27 @@ def move_position(lat, lon, bearing_rad, distance_m):
     new_lon_deg = (math.degrees(new_lon_rad) + 540) % 360 - 180
     return math.degrees(new_lat_rad), new_lon_deg
 
-def clamp_to_lake(lat, lon, cog_true_deg, heading_velocity, bounds=CANYON_LAKE_BOUNDS):
+def clamp_to_lake(lat, lon, cog_true_deg, heading_velocity, bounds=CANYON_LAKE_BOUNDS, target_lat=START_LAT, target_lon=START_LON):
     """
-    Keeps the simulated position inside the Canyon Lake bounding box.
-    If the boat drifts past a bound, it's pulled back inside and its
-    course is reflected so it heads back toward open water instead of
-    running aground.
+    Checks if the boat is outside the bounding box. If outside, re-routes
+    the heading/COG straight toward the target (start) lat/lon.
     """
-    bounced = False
+    is_out_of_bounds = (
+        lat > bounds["north"] or
+        lat < bounds["south"] or
+        lon > bounds["east"] or
+        lon < bounds["west"]
+    )
 
-    if lat > bounds["north"]:
-        lat = bounds["north"]
-        cog_true_deg = (-cog_true_deg) % 360   # reflect north/south component
-        bounced = True
-    elif lat < bounds["south"]:
-        lat = bounds["south"]
-        cog_true_deg = (-cog_true_deg) % 360
-        bounced = True
-
-    if lon > bounds["east"]:
-        lon = bounds["east"]
-        cog_true_deg = (180 - cog_true_deg) % 360  # reflect east/west component
-        bounced = True
-    elif lon < bounds["west"]:
-        lon = bounds["west"]
-        cog_true_deg = (180 - cog_true_deg) % 360
-        bounced = True
-
-    if bounced:
+    if is_out_of_bounds:
+        # Direct compass bearing back to start coordinates
+        cog_true_deg = calculate_initial_bearing(lat, lon, target_lat, target_lon)
         heading_velocity = 0.0
 
     return lat, lon, cog_true_deg, heading_velocity
 
 def run_simulation(bus):
     """Handles the main loop updates sequentially without layout nesting."""
-    # Simulation Initial baselines
     wind_speed_knots = 12.0                     
     current_depth = 12.4                       
     water_temp_c = 18.5                        
@@ -186,7 +182,6 @@ def run_simulation(bus):
           f"N {CANYON_LAKE_BOUNDS['north']}, S {CANYON_LAKE_BOUNDS['south']}, "
           f"E {CANYON_LAKE_BOUNDS['east']}, W {CANYON_LAKE_BOUNDS['west']}")
 
-    # NEW: Tracks the current turning momentum of the boat
     heading_velocity = 0.0 
 
     while True:
@@ -202,25 +197,16 @@ def run_simulation(bus):
         boat_speed_m_s = boat_speed_knots * KNOTS_TO_M_S
 
         # 2. Process High Frequency Heading and GPS Math (10Hz Cycle Slice)
-        # Nudge the turning velocity slightly on every tick
         heading_velocity += random.uniform(-0.05, 0.05)
-        
-        # Keep the turn rate gentle (max 1.5 degrees per second in either direction)
         heading_velocity = max(-0.15, min(0.15, heading_velocity))
-        
-        # Apply a tiny "drag" factor so the boat naturally wants to straighten out eventually
         heading_velocity *= 0.98
 
-        # Update the true heading by our current turning momentum
         cog_true_deg = (cog_true_deg + heading_velocity) % 360
         cog_true_rad = math.radians(cog_true_deg)
         
-        cog_mag_deg = (cog_true_deg - MAGNETIC_VARIATION) % 360
-        cog_mag_rad = math.radians(cog_mag_deg)
-        
         lat, lon = move_position(lat, lon, cog_true_rad, boat_speed_m_s / 10.0)
 
-        # Keep the vessel within the Canyon Lake, TX bounding box
+        # Redirect toward starting point if out of bounds
         lat, lon, cog_true_deg, heading_velocity = clamp_to_lake(
             lat, lon, cog_true_deg, heading_velocity
         )
@@ -228,7 +214,6 @@ def run_simulation(bus):
         cog_mag_deg = (cog_true_deg - MAGNETIC_VARIATION) % 360
         cog_mag_rad = math.radians(cog_mag_deg)
         
-        # RESTORED: Wave motion math required for Section 3
         pitch_sim = math.radians(1.5 * math.sin(time.time() * 2))
         roll_sim = math.radians(3.0 * math.cos(time.time() * 1.5))
         rot_sim = 0.05 * math.cos(time.time())
@@ -265,10 +250,9 @@ def run_simulation(bus):
             bus.send(can.Message(arbitration_id=can_id_from_pgn(128259, 2, 35), data=stw_p, is_extended_id=True))
             bus.send(can.Message(arbitration_id=can_id_from_pgn(130310, 5, 35), data=temp_p, is_extended_id=True))
 
-            print(f"[SIM] Wind: {wind_speed_knots:.2f}kt | Boat Spd: {boat_speed_knots:.2f}kt | Depth: {current_depth:.1f}m | Pos: {lat:.4f},{lon:.4f}")
+            print(f"[SIM] Wind: {wind_speed_knots:.2f}kt | Boat Spd: {boat_speed_knots:.2f}kt | Depth: {current_depth:.1f}m | Pos: {lat:.4f},{lon:.4f} | HDG: {cog_true_deg:.1f}°")
 
         counter += 1
-        time.slice_step = 0.1
         time.sleep(0.1)
 
 def main():
