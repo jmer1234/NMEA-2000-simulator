@@ -19,10 +19,10 @@ BOAT_SPEED_MODIFIER = 0.4
 
 # Canyon Lake, TX (Comal County) bounding box.
 CANYON_LAKE_BOUNDS = {
-    "north": 29.930,
-    "south": 29.845,
-    "east": -98.170,
-    "west": -98.320,
+    "north": 29.917,
+    "south": 29.850,
+    "east": -98.196,
+    "west": -98.290,
 }
 
 # Starting point roughly in the middle of the lake
