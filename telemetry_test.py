@@ -29,6 +29,9 @@ CANYON_LAKE_BOUNDS = {
 START_LAT = 29.8746
 START_LON = -98.2496
 
+# Set the CAN interface
+CAN_INTERFACE = "can0"
+
 def calculate_initial_bearing(lat1, lon1, lat2, lon2):
     """Calculates the initial compass bearing from (lat1, lon1) to (lat2, lon2) in degrees [0, 360)."""
     phi1 = math.radians(lat1)
@@ -256,10 +259,10 @@ def run_simulation(bus):
         time.sleep(0.1)
 
 def main():
-    print("[-] Connecting to Waveshare hardware interface can0...")
+    print(f"[-] Connecting to Waveshare hardware interface {CAN_INTERFACE}...")
     bus = None
     try:
-        bus = can.interface.Bus(channel='can0', interface='socketcan')
+        bus = can.interface.Bus(channel={CAN_INTERFACE}, interface='socketcan')
         print("[-] Hardware layer established successfully.")
         run_simulation(bus)
     except KeyboardInterrupt:
