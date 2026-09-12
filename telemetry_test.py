@@ -262,7 +262,7 @@ def main():
     print(f"[-] Connecting to Waveshare hardware interface {CAN_INTERFACE}...")
     bus = None
     try:
-        bus = can.interface.Bus(channel={CAN_INTERFACE}, interface='socketcan')
+        bus = can.interface.Bus(channel=f"{CAN_INTERFACE}", interface='socketcan')
         print("[-] Hardware layer established successfully.")
         run_simulation(bus)
     except KeyboardInterrupt:
