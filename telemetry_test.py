@@ -104,7 +104,7 @@ def pack_apparent_wind_pgn130306(speed_m_s, angle_rad):
 def pack_depth_pgn128267(depth_meters):
     """Packs depth measurements into PGN 128267 (Water Depth)."""
     sid = 0x01
-    depth_raw = int(depth_meters * 10) & 0xFFFFFFFF 
+    depth_raw = int(depth_meters * 100) & 0xFFFFFFFF 
     offset = 0x0000                                 
     reserved = 0xFF                                 
     return struct.pack("<BIhB", sid, depth_raw, offset, reserved)
